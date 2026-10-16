@@ -1,0 +1,13 @@
+/* Tailwind v4 — map design tokens to utilities (bg-lux-bg, text-lux-gold, etc.) */
+@theme {
+  --color-lux-bg: #080808;
+  --color-lux-bg-secondary: #141311;
+  --color-lux-surface: #1a1917;
+  --color-lux-gold: #c8a45d;
+  --color-lux-champagne: #e5c78a;
+  --color-lux-ink: #f5f0e7;
+  --color-lux-muted: #a9a29a;
+
+  --font-display: var(--font-display), "Cormorant Garamond", Georgia, serif;
+  --font-sans: var(--font-body), Inter, system-ui, sans-serif;
+}

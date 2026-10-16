@@ -1,0 +1,15 @@
+/* Royal Midnight Black & Gold — design tokens */
+:root {
+  --lux-bg: #080808;
+  --lux-bg-secondary: #141311;
+  --lux-surface: #1a1917;
+  --lux-surface-elevated: #222120;
+  --lux-gold: #c8a45d;
+  --lux-gold-champagne: #e5c78a;
+  --lux-text: #f5f0e7;
+  --lux-text-muted: #a9a29a;
+  --lux-border: rgba(200, 164, 93, 0.2);
+  --lux-border-strong: rgba(200, 164, 93, 0.35);
+  --lux-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  --lux-glass: rgba(18, 18, 18, 0.72);
+}
