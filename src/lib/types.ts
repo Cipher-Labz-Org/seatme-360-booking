@@ -26,6 +26,10 @@ export type PanoramaScenePublic = {
   name: string;
   panoramaUrl: string;
   sortOrder: number;
+  isMain?: boolean;
+  tableId?: string | null;
+  defaultPitch?: number | null;
+  defaultYaw?: number | null;
   navFrom: SceneNavHotspot[];
 };
 

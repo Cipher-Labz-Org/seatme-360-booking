@@ -1,18 +1,18 @@
-import { API_URL } from "./config";
+import { API_URL, isDemoMode } from "./config";
+import { handleDemoApi } from "./demo/handleDemoApi";
 import { getToken } from "./auth-storage";
 
-export class ApiError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+import { ApiError } from "./apiError";
+
+export { ApiError };
 
 export async function api<T>(
   path: string,
   options: RequestInit & { auth?: boolean } = {}
 ): Promise<T> {
+  if (isDemoMode()) {
+    return handleDemoApi<T>(path, options);
+  }
   const headers = new Headers(options.headers);
   if (!headers.has("Content-Type") && !(options.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");

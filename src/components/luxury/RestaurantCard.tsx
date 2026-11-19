@@ -31,21 +31,17 @@ export function RestaurantCard({ venue, bookQuery = "" }: Props) {
           {has360 && <span className="badge badge-gold">360° immersive</span>}
         </div>
         <div className="restaurant-body">
+          <p className="restaurant-card-category">
+            {venue.cuisine || (venue.type === "HOTEL" ? "Hotel dining" : "Fine dining")}
+          </p>
           <h3>{venue.name}</h3>
+          <p className="restaurant-card-location">{venue.city}</p>
           <p className="restaurant-card-desc">
             {venue.description?.slice(0, 120) || "An exceptional dining destination on SeatMe."}
             {venue.description && venue.description.length > 120 ? "…" : ""}
           </p>
           <div className="restaurant-meta">
-            <span>{venue.cuisine || (venue.type === "HOTEL" ? "Hotel dining" : "Fine dining")}</span>
-            <span aria-hidden>•</span>
-            <span>{venue.city}</span>
-            {venue.priceHint && (
-              <>
-                <span aria-hidden>•</span>
-                <span>{venue.priceHint}</span>
-              </>
-            )}
+            {venue.priceHint && <span>{venue.priceHint}</span>}
           </div>
         </div>
       </Link>

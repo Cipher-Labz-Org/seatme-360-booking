@@ -1,13 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TablePreviewPanel } from "@/components/luxury/TablePreviewPanel";
 import { SiteFooter } from "@/components/SiteFooter";
 import { TopBar } from "@/components/TopBar";
 import { FloorPlanPicker } from "@/components/FloorPlanPicker";
-import { PanoramaViewer } from "@/components/PanoramaViewer";
+import { PanoramaViewer, type PanoramaViewerApi } from "@/components/PanoramaViewer";
+import { TableTourPopover } from "@/components/TableTourPopover";
+import { TourMiniMap } from "@/components/TourMiniMap";
 import { api } from "@/lib/api";
+import { mainSceneId, sceneFloorPositions, viewpointSceneForTable } from "@/lib/tourMap";
 import type { PublicLocation, TableAvailability } from "@/lib/types";
 
 function tomorrowIso() {
@@ -45,13 +48,23 @@ export function BookLocationView({
   const [location, setLocation] = useState<PublicLocation | null>(null);
   const [availability, setAvailability] = useState<TableAvailability[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [viewScene, setViewScene] = useState<"area" | "table">("area");
+  const [popoverTableId, setPopoverTableId] = useState<string | null>(null);
   const [tourSceneId, setTourSceneId] = useState<string | null>(null);
+  const panoramaApiRef = useRef<PanoramaViewerApi | null>(null);
   const [viewMode, setViewMode] = useState<"360" | "list" | "floor">("360");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
-  const [bookingRef, setBookingRef] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState<{
+    restaurant: string;
+    reference: string;
+    table: string;
+    date: string;
+    time: string;
+    guests: string;
+    status: string;
+  } | null>(null);
   const [form, setForm] = useState({
     date: initialDate ?? tomorrowIso(),
     time: initialTime ?? "19:00",
@@ -102,17 +115,20 @@ export function BookLocationView({
     }));
   }, [initialDate, initialTime, initialGuests, initialOccasion]);
 
-  useEffect(() => {
-    if (!location?.scenes?.length) return;
-    setTourSceneId((prev) =>
-      prev && location.scenes!.some((s) => s.id === prev) ? prev : location.scenes![0].id
-    );
-  }, [location]);
+  const sceneIdsKey = location?.scenes?.map((s) => s.id).join(",") ?? "";
 
   useEffect(() => {
-    if (!location) return;
+    if (!location?.scenes?.length) return;
+    const main = mainSceneId(location.scenes);
+    setTourSceneId((prev) =>
+      prev && location.scenes!.some((s) => s.id === prev) ? prev : main
+    );
+  }, [location?.id, sceneIdsKey]);
+
+  useEffect(() => {
+    if (!location?.id) return;
     loadAvailability().catch(() => showToast("Could not load availability"));
-  }, [location, loadAvailability]);
+  }, [location?.id, loadAvailability]);
 
   const statusMap = useMemo(() => {
     const m = new Map<string, TableAvailability["status"]>();
@@ -128,6 +144,10 @@ export function BookLocationView({
       id: s.id,
       name: s.name,
       panoramaUrl: s.panoramaUrl,
+      isMain: s.isMain,
+      tableId: s.tableId,
+      defaultPitch: s.defaultPitch,
+      defaultYaw: s.defaultYaw,
       navHotspots: s.navFrom.map((h) => ({
         pitch: h.pitch,
         yaw: h.yaw,
@@ -139,13 +159,31 @@ export function BookLocationView({
 
   const activePanorama = useMemo(() => {
     if (!location) return null;
-    if (viewScene === "table" && selected?.panoramaUrl) return selected.panoramaUrl;
     if (tourScenes?.length) return null;
     return location.panoramaUrl;
-  }, [location, viewScene, selected, tourScenes]);
+  }, [location, tourScenes]);
+
+  const mapScenes = useMemo(() => {
+    if (!location?.scenes?.length) return [];
+    const positions = sceneFloorPositions(location.scenes, location.tables);
+    return location.scenes.map((s) => {
+      const pos = positions.get(s.id);
+      return {
+        id: s.id,
+        name: s.name,
+        isMain: s.isMain,
+        x: pos?.x ?? null,
+        y: pos?.y ?? null,
+      };
+    });
+  }, [location]);
+
+  const mainId = location?.scenes?.length ? mainSceneId(location.scenes) : null;
+  const activeViewpointScene = location?.scenes?.find((s) => s.id === tourSceneId);
+  const atTableViewpoint = Boolean(activeViewpointScene?.tableId);
 
   const viewerTables = useMemo(() => {
-    if (!location || viewScene === "table") return [];
+    if (!location) return [];
     return location.tables.map((t) => ({
       id: t.id,
       code: t.code,
@@ -153,13 +191,15 @@ export function BookLocationView({
       pitch: t.pitch,
       yaw: t.yaw,
       sceneId: t.sceneId,
+      minGuests: t.minGuests,
+      maxGuests: t.maxGuests,
       status: (statusMap.get(t.id) === "available"
         ? selectedId === t.id
           ? "selected"
           : "available"
         : statusMap.get(t.id) ?? "reserved") as "available" | "reserved" | "unsuitable" | "neutral" | "selected",
     }));
-  }, [location, statusMap, selectedId, viewScene]);
+  }, [location, statusMap, selectedId]);
 
   const floorTables = useMemo(() => {
     if (!location) return [];
@@ -181,6 +221,15 @@ export function BookLocationView({
     [availability]
   );
 
+  const goToScene = (sceneId: string) => {
+    setTourSceneId((prev) => (prev === sceneId ? prev : sceneId));
+    panoramaApiRef.current?.loadScene(sceneId);
+  };
+
+  const goToMainRoom = () => {
+    if (mainId) goToScene(mainId);
+  };
+
   const onSelect = (id: string) => {
     const status = statusMap.get(id);
     if (status !== "available") {
@@ -188,7 +237,25 @@ export function BookLocationView({
       return;
     }
     setSelectedId(id);
-    setViewScene("area");
+    setPopoverTableId(null);
+  };
+
+  const onTableMarkerClick = (id: string) => {
+    setPopoverTableId(id);
+  };
+
+  const popoverTable = location?.tables.find((t) => t.id === popoverTableId) ?? null;
+  const popoverStatus = popoverTableId ? statusMap.get(popoverTableId) ?? "reserved" : "reserved";
+
+  const walkToTableView = (tableId: string) => {
+    if (!location?.scenes) return;
+    const sceneId = viewpointSceneForTable(location.scenes, tableId);
+    if (!sceneId) {
+      showToast("No walkthrough panorama uploaded for this table yet.");
+      return;
+    }
+    setPopoverTableId(null);
+    goToScene(sceneId);
   };
 
   const onBook = async () => {
@@ -197,6 +264,7 @@ export function BookLocationView({
       return;
     }
     if (!form.name.trim() || !form.mobile.trim()) {
+      setDetailsOpen(true);
       showToast("Enter your name and mobile number.");
       return;
     }
@@ -216,7 +284,15 @@ export function BookLocationView({
           specialRequests: form.specialRequests.trim(),
         }),
       });
-      setBookingRef(booking.id.slice(-8).toUpperCase());
+      setConfirmation({
+        restaurant: location?.venue.name ?? "SeatMe",
+        reference: booking.id.slice(-8).toUpperCase(),
+        table: location?.tables.find((t) => t.id === selectedId)?.code ?? "Table",
+        date: form.date,
+        time: form.time,
+        guests: form.guests,
+        status: "Confirmed",
+      });
       setModalOpen(true);
       loadAvailability();
     } catch (e) {
@@ -252,7 +328,7 @@ export function BookLocationView({
   return (
     <>
       <TopBar />
-      <main className="container page-main">
+      <main className="container page-main booking-page">
         <section className="page-header">
           <div className="page-header-row">
             <div>
@@ -269,7 +345,7 @@ export function BookLocationView({
             <li className="active">Date & time</li>
             <li className={viewMode === "360" || viewMode === "floor" ? "active" : ""}>Explore 360°</li>
             <li className={selectedId ? "active" : ""}>Select table</li>
-            <li className={viewScene === "table" ? "active" : ""}>Table preview</li>
+            <li className={atTableViewpoint ? "active" : ""}>Table viewpoint</li>
             <li className={modalOpen ? "active" : ""}>Confirm</li>
           </ol>
         </section>
@@ -289,7 +365,7 @@ export function BookLocationView({
           </div>
         ) : null}
 
-        <div className="view-mode-tabs">
+        <div className="view-mode-tabs panorama-controls-float">
           <button type="button" className={viewMode === "360" ? "active" : ""} onClick={() => setViewMode("360")}>
             360° View
           </button>
@@ -301,51 +377,88 @@ export function BookLocationView({
           <button type="button" className={viewMode === "list" ? "active" : ""} onClick={() => setViewMode("list")}>
             Table list
           </button>
-          {viewScene === "table" && (
-            <button type="button" className="button outline" onClick={() => setViewScene("area")}>
-              ← Back to dining area
+          {mainId && tourSceneId && tourSceneId !== mainId && (
+            <button type="button" className="button outline" onClick={goToMainRoom}>
+              ← Back to main room
             </button>
           )}
         </div>
 
-        <section className="booking-layout">
+        <section className="booking-layout booking-layout-immersive">
           <div className="panel panel-royal panorama-frame booking-viewer-col">
             {viewMode === "360" ? (
-              <>
-                {viewScene === "table" && (
-                  <p className="panorama-scene-label">
-                    {selected?.panoramaUrl
-                      ? `View from ${selected.code}`
-                      : `Area view (no table-specific panorama for ${selected?.code})`}
-                  </p>
+              <div className="booking-viewer-stack">
+                {atTableViewpoint && activeViewpointScene?.tableId && (
+                  <div className="viewpoint-scene-banner" role="status">
+                    <strong>
+                      {location.tables.find((t) => t.id === activeViewpointScene.tableId)?.code ?? "Table"} viewpoint
+                    </strong>
+                    <span>Real 360° captured at this table — use arrows or tabs to explore nearby areas.</span>
+                    {statusMap.get(activeViewpointScene.tableId) === "available" &&
+                      selectedId !== activeViewpointScene.tableId && (
+                        <button
+                          type="button"
+                          className="button primary small"
+                          onClick={() => onSelect(activeViewpointScene.tableId!)}
+                        >
+                          Select this table
+                        </button>
+                      )}
+                    {mainId && (
+                      <button type="button" className="button ghost small" onClick={goToMainRoom}>
+                        Main room
+                      </button>
+                    )}
+                  </div>
                 )}
+                <TourMiniMap
+                  floorPlanUrl={location.floorPlanUrl}
+                  scenes={mapScenes}
+                  activeSceneId={tourSceneId}
+                  onGoToScene={goToScene}
+                />
                 <PanoramaViewer
                   panoramaPath={activePanorama}
-                  scenes={viewScene === "area" ? tourScenes : undefined}
+                  scenes={tourScenes}
                   activeSceneId={tourSceneId ?? undefined}
-                  onSceneChange={setTourSceneId}
+                  onSceneChange={(id) => setTourSceneId((prev) => (prev === id ? prev : id))}
                   tables={viewerTables}
                   defaultPitch={location.defaultPitch}
                   defaultYaw={location.defaultYaw}
                   defaultHfov={location.defaultHfov}
                   mode="book"
                   selectedId={selectedId}
-                  onSelect={onSelect}
+                  onTableMarkerClick={onTableMarkerClick}
+                  apiRef={panoramaApiRef}
                 />
-                {selected && viewMode === "360" && viewScene === "area" && (
+                {popoverTable && (
+                  <div className="table-tour-popover-anchor">
+                    <TableTourPopover
+                      table={popoverTable}
+                      status={popoverStatus}
+                      hasWalkthroughView={Boolean(
+                        location.scenes && viewpointSceneForTable(location.scenes, popoverTable.id)
+                      )}
+                      onSelect={() => onSelect(popoverTable.id)}
+                      onWalkToView={() => walkToTableView(popoverTable.id)}
+                      onClose={() => setPopoverTableId(null)}
+                    />
+                  </div>
+                )}
+                {selected && viewMode === "360" && !popoverTable && (
                   <div className="lux-bottom-sheet table-preview-sheet">
                     <TablePreviewPanel
                       table={selected}
                       status={selectedStatus}
                       locationName={location.name}
-                      viewingTablePanorama={false}
-                      onViewFromTable={() => setViewScene("table")}
+                      viewingTablePanorama={atTableViewpoint && selected.id === activeViewpointScene?.tableId}
+                      onViewFromTable={() => walkToTableView(selected.id)}
                       onReserve={onBook}
                       onClose={() => setSelectedId(null)}
                     />
                   </div>
                 )}
-              </>
+              </div>
             ) : viewMode === "floor" && location.floorPlanUrl ? (
               <FloorPlanPicker
                 floorPlanUrl={location.floorPlanUrl}
@@ -358,6 +471,8 @@ export function BookLocationView({
               <ul className="table-list-select">
                 {location.tables.map((t) => {
                   const st = statusMap.get(t.id) ?? "reserved";
+                  const zone =
+                    location.scenes?.find((s) => s.id === t.sceneId)?.name || location.name;
                   return (
                     <li key={t.id}>
                       <button
@@ -366,9 +481,16 @@ export function BookLocationView({
                         disabled={st !== "available"}
                         onClick={() => onSelect(t.id)}
                       >
-                        <strong>{t.code}</strong>
                         <span>
-                          {t.minGuests}–{t.maxGuests} guests · {st}
+                          <strong>{t.code}</strong>
+                          <em className="table-list-zone">{zone}</em>
+                          {t.label ? <em className="table-list-desc">{t.label}</em> : null}
+                        </span>
+                        <span className="table-list-meta">
+                          {t.minGuests}–{t.maxGuests} guests
+                          <br />
+                          {st === "available" ? "Available" : st === "unsuitable" ? "Party size" : "Unavailable"}
+                          {t.panoramaUrl ? " · Table preview" : ""}
                         </span>
                       </button>
                     </li>
@@ -378,7 +500,15 @@ export function BookLocationView({
             )}
           </div>
 
-          <aside className="panel panel-royal">
+          <aside className={`panel panel-royal booking-side-panel ${detailsOpen ? "open" : ""}`}>
+            <button
+              type="button"
+              className="booking-details-toggle"
+              onClick={() => setDetailsOpen((open) => !open)}
+              aria-expanded={detailsOpen}
+            >
+              {detailsOpen ? "Hide reservation details" : "Reservation details"}
+            </button>
             <h3 className="booking-panel-title">Your reservation</h3>
             <div className="form-grid" style={{ marginTop: 16 }}>
               <label>
@@ -447,11 +577,20 @@ export function BookLocationView({
                 <>
                   <strong>{selected.code}</strong>
                   <p className="selection-meta">
-                    {selected.label || location.name} · {selected.minGuests}–{selected.maxGuests} guests
+                    {(location.scenes?.find((s) => s.id === selected.sceneId)?.name || location.name)}
+                    {" · "}
+                    {selected.minGuests}–{selected.maxGuests} guests
+                    {selected.seatingType ? ` · ${selected.seatingType}` : ""}
                   </p>
-                  {selected.panoramaUrl && (
-                    <button type="button" className="button outline" style={{ marginTop: 10 }} onClick={() => setViewScene("table")}>
-                      View from this table
+                  {selected.label ? <p className="selection-meta">{selected.label}</p> : null}
+                  {selected.panoramaUrl && location.scenes && viewpointSceneForTable(location.scenes, selected.id) && (
+                    <button
+                      type="button"
+                      className="button outline"
+                      style={{ marginTop: 10 }}
+                      onClick={() => walkToTableView(selected.id)}
+                    >
+                      Walk to table 360°
                     </button>
                   )}
                 </>
@@ -497,23 +636,53 @@ export function BookLocationView({
       <SiteFooter />
 
       <div className={`toast ${toast ? "show" : ""}`}>{toast}</div>
-      <div
-        className={`modal ${modalOpen ? "open" : ""}`}
-        onClick={(e) => e.target === e.currentTarget && setModalOpen(false)}
-      >
-        <div className="modal-card confirmation-luxury">
-          <div className="success-icon">✓</div>
-          <p className="eyebrow">Experience confirmed</p>
-          <h3>{selected?.code ?? "Your table"} awaits</h3>
-          <p className="confirmation-ref">Reference · {bookingRef}</p>
-          <p style={{ color: "var(--muted)" }}>
-            {location.venue.name} · {form.date} at {form.time} · {form.guests} guests
-          </p>
-          <button type="button" className="button primary" onClick={() => setModalOpen(false)}>
-            Done
-          </button>
+      {modalOpen && confirmation && (
+        <div
+          className="modal open"
+          onClick={(e) => e.target === e.currentTarget && setModalOpen(false)}
+        >
+          <div className="modal-card confirmation-luxury">
+            <div className="success-icon">✓</div>
+            <p className="eyebrow">Reservation confirmed</p>
+            <h3>{confirmation.restaurant}</h3>
+            <dl className="confirmation-details">
+              <div>
+                <dt>Booking reference</dt>
+                <dd className="confirmation-ref">{confirmation.reference}</dd>
+              </div>
+              <div>
+                <dt>Table</dt>
+                <dd>{confirmation.table}</dd>
+              </div>
+              <div>
+                <dt>Date & time</dt>
+                <dd>
+                  {confirmation.date} at {confirmation.time}
+                </dd>
+              </div>
+              <div>
+                <dt>Guests</dt>
+                <dd>{confirmation.guests}</dd>
+              </div>
+              <div>
+                <dt>Status</dt>
+                <dd>{confirmation.status}</dd>
+              </div>
+            </dl>
+            <p className="form-footnote">No payment has been taken. The restaurant will honour this reservation.</p>
+            <button
+              type="button"
+              className="button primary"
+              onClick={() => {
+                setModalOpen(false);
+                setConfirmation(null);
+              }}
+            >
+              Done
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 }

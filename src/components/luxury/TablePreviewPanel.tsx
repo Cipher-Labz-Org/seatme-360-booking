@@ -33,9 +33,10 @@ export function TablePreviewPanel({
       <p className="eyebrow">Selected table</p>
       <h3 className="table-preview-title">{table.code}</h3>
       <p className="table-preview-meta">
-        {table.label || locationName} · {table.minGuests}–{table.maxGuests} guests
+        {locationName} · {table.minGuests}–{table.maxGuests} guests
         {table.seatingType ? ` · ${table.seatingType}` : ""}
       </p>
+      {table.label ? <p className="table-preview-meta">{table.label}</p> : null}
       <p className={`table-preview-status status-${status}`} aria-live="polite">
         {status === "available" && "Available for your party"}
         {status === "reserved" && "Reserved for this time"}

@@ -19,6 +19,7 @@ export function DiscoverView({ venues }: { venues: PublicVenue[] }) {
   const [date, setDate] = useState(searchParams.get("date") ?? tomorrowIso());
   const [time, setTime] = useState(searchParams.get("time") ?? "19:00");
   const [guests, setGuests] = useState(searchParams.get("guests") ?? "2");
+  const occasion = searchParams.get("occasion") ?? "";
 
   const cuisines = useMemo(() => {
     const set = new Set<string>();
@@ -42,14 +43,20 @@ export function DiscoverView({ venues }: { venues: PublicVenue[] }) {
     });
   }, [venues, query, cuisine]);
 
-  const bookQuery = `?date=${encodeURIComponent(date)}&time=${encodeURIComponent(time)}&guests=${encodeURIComponent(guests)}`;
+  const bookQuery = `?date=${encodeURIComponent(date)}&time=${encodeURIComponent(time)}&guests=${encodeURIComponent(guests)}${
+    occasion ? `&occasion=${encodeURIComponent(occasion)}` : ""
+  }`;
 
   return (
     <div className="container discover-inner">
       <SectionHeader
         eyebrow="Restaurant discovery"
         title="Find your next extraordinary table"
-        lead="Search by city, cuisine, and party details — then step inside with 360° before you reserve."
+        lead={
+          occasion
+            ? `Browsing for ${occasion}. Search by city or cuisine — occasion is passed through to reservation.`
+            : "Search by city, cuisine, and party details — then step inside with 360° before you reserve."
+        }
       />
 
       <form

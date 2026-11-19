@@ -11,6 +11,8 @@ export type ViewerTable = {
   pitch: number;
   yaw: number;
   sceneId?: string | null;
+  minGuests?: number;
+  maxGuests?: number;
   status?: "available" | "reserved" | "unsuitable" | "neutral" | "selected";
 };
 
@@ -18,6 +20,10 @@ export type ViewerScene = {
   id: string;
   name: string;
   panoramaUrl: string;
+  isMain?: boolean;
+  tableId?: string | null;
+  defaultPitch?: number | null;
+  defaultYaw?: number | null;
   navHotspots: { pitch: number; yaw: number; targetSceneId: string; label: string }[];
 };
 
@@ -33,8 +39,11 @@ type Props = {
   mode: "book" | "edit";
   selectedId?: string | null;
   onSelect?: (id: string) => void;
+  /** Booking mode: open table details popover instead of selecting immediately. */
+  onTableMarkerClick?: (id: string) => void;
   onPlace?: (pitch: number, yaw: number) => void;
   apiRef?: React.MutableRefObject<PanoramaViewerApi | null>;
+  sceneFadeMs?: number;
 };
 
 type PannellumViewer = {
@@ -49,6 +58,7 @@ type PannellumViewer = {
 export type PanoramaViewerApi = {
   getLookAt: () => { pitch: number; yaw: number } | null;
   isReady: () => boolean;
+  loadScene: (sceneId: string) => void;
 };
 
 function loadPannellumScript() {
@@ -97,13 +107,14 @@ declare global {
   }
 }
 
-function tablesForScene(sceneId: string, scenes: ViewerScene[], tables: ViewerTable[]) {
-  const firstId = scenes[0]?.id;
+function tablesForScene(scene: ViewerScene, scenes: ViewerScene[], tables: ViewerTable[]) {
+  if (scene.tableId) return [];
+  const firstId = scenes.find((s) => s.isMain)?.id ?? scenes[0]?.id;
   return tables.filter((t) => {
     if (!t.sceneId) {
-      return scenes.length <= 1 || sceneId === firstId;
+      return scenes.length <= 1 || scene.id === firstId;
     }
-    return t.sceneId === sceneId;
+    return t.sceneId === scene.id;
   });
 }
 
@@ -119,29 +130,41 @@ export function PanoramaViewer({
   mode,
   selectedId,
   onSelect,
+  onTableMarkerClick,
   onPlace,
   apiRef,
+  sceneFadeMs = 900,
 }: Props) {
   const containerId = useRef(`panorama-${Math.random().toString(36).slice(2)}`);
   const viewerRef = useRef<PannellumViewer | null>(null);
   const onSelectRef = useRef(onSelect);
+  const onTableMarkerClickRef = useRef(onTableMarkerClick);
   const onPlaceRef = useRef(onPlace);
   const onSceneChangeRef = useRef(onSceneChange);
   const modeRef = useRef(mode);
+  const loadedSceneRef = useRef<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [sceneTransition, setSceneTransition] = useState(false);
 
   onSelectRef.current = onSelect;
+  onTableMarkerClickRef.current = onTableMarkerClick;
   onPlaceRef.current = onPlace;
   onSceneChangeRef.current = onSceneChange;
   modeRef.current = mode;
 
   const useMultiScene = !!scenes && scenes.length > 0;
-  const firstSceneId = useMultiScene ? (activeSceneId ?? scenes![0].id) : null;
+  const resolvedActiveId = useMultiScene
+    ? activeSceneId && scenes!.some((s) => s.id === activeSceneId)
+      ? activeSceneId
+      : scenes!.find((s) => s.isMain)?.id ?? scenes![0].id
+    : null;
 
-  const tablesKey = tables.map((t) => `${t.id}:${t.status}:${t.pitch}:${t.yaw}:${t.sceneId}`).join("|");
+  const tablesKey = tables
+    .map((t) => `${t.id}:${t.status}:${t.pitch}:${t.yaw}:${t.sceneId}:${t.minGuests}:${t.maxGuests}`)
+    .join("|");
   const scenesKey = useMultiScene
-    ? scenes!.map((s) => `${s.id}:${s.panoramaUrl}:${s.navHotspots.length}`).join("|")
+    ? scenes!.map((s) => `${s.id}:${s.panoramaUrl}:${s.navHotspots.length}:${s.isMain}:${s.tableId}`).join("|")
     : "";
 
   useEffect(() => {
@@ -155,8 +178,8 @@ export function PanoramaViewer({
     }
 
     const urls = useMultiScene
-      ? scenes!.map((s) => assetUrl(s.panoramaUrl)).filter(Boolean) as string[]
-      : [assetUrl(panoramaPath!)].filter(Boolean) as string[];
+      ? (scenes!.map((s) => assetUrl(s.panoramaUrl)).filter(Boolean) as string[])
+      : ([assetUrl(panoramaPath!)].filter(Boolean) as string[]);
 
     if (urls.length === 0) return;
 
@@ -174,28 +197,41 @@ export function PanoramaViewer({
 
         const hotspotElement = (
           div: HTMLDivElement,
-          args: { id: string; code: string; status: string }
+          args: { id: string; code: string; status: string; minGuests?: number; maxGuests?: number }
         ) => {
           div.classList.add("table-hotspot", args.status);
           div.dataset.label = args.code;
+          div.setAttribute("role", "button");
+          div.setAttribute("aria-label", `Table ${args.code}`);
+          if (args.minGuests != null && args.maxGuests != null) {
+            div.dataset.guests = `${args.minGuests}-${args.maxGuests}`;
+          }
           div.addEventListener("click", (e) => {
             e.stopPropagation();
-            if (modeRef.current === "book" && onSelectRef.current) onSelectRef.current(args.id);
+            if (modeRef.current !== "book") return;
+            if (onTableMarkerClickRef.current) onTableMarkerClickRef.current(args.id);
+            else if (onSelectRef.current) onSelectRef.current(args.id);
           });
         };
 
         let config: Record<string, unknown>;
 
         if (useMultiScene && scenes) {
-          const startId = activeSceneId && scenes.some((s) => s.id === activeSceneId) ? activeSceneId : scenes[0].id;
+          const startId =
+            activeSceneId && scenes.some((s) => s.id === activeSceneId)
+              ? activeSceneId
+              : scenes.find((s) => s.isMain)?.id ?? scenes[0].id;
           const sceneMap: Record<string, unknown> = {};
           for (const scene of scenes) {
             const pano = assetUrl(scene.panoramaUrl)!;
-            const sceneTables = tablesForScene(scene.id, scenes, tables);
+            const sceneTables = tablesForScene(scene, scenes, tables);
             sceneMap[scene.id] = {
               type: "equirectangular",
               panorama: pano,
               ...(pano.startsWith("http") ? { crossOrigin: "anonymous" } : {}),
+              pitch: scene.defaultPitch ?? defaultPitch,
+              yaw: scene.defaultYaw ?? defaultYaw,
+              hfov: defaultHfov,
               hotSpots: [
                 ...sceneTables.map((t) => ({
                   pitch: t.pitch,
@@ -206,6 +242,8 @@ export function PanoramaViewer({
                     id: t.id,
                     code: t.code,
                     status: t.status ?? "neutral",
+                    minGuests: t.minGuests,
+                    maxGuests: t.maxGuests,
                   },
                 })),
                 ...scene.navHotspots.map((h) => ({
@@ -213,8 +251,8 @@ export function PanoramaViewer({
                   yaw: h.yaw,
                   type: "scene",
                   sceneId: h.targetSceneId,
-                  text: h.label || "Next area →",
-                  cssClass: "scene-nav-hotspot",
+                  text: h.label || "Walk →",
+                  cssClass: "scene-nav-hotspot scene-nav-arrow",
                 })),
               ],
             };
@@ -222,7 +260,7 @@ export function PanoramaViewer({
           config = {
             default: {
               firstScene: startId,
-              sceneFadeDuration: 800,
+              sceneFadeDuration: sceneFadeMs,
               pitch: defaultPitch,
               yaw: defaultYaw,
               hfov: defaultHfov,
@@ -258,6 +296,8 @@ export function PanoramaViewer({
                 id: t.id,
                 code: t.code,
                 status: t.status ?? "neutral",
+                minGuests: t.minGuests,
+                maxGuests: t.maxGuests,
               },
             })),
           };
@@ -271,6 +311,14 @@ export function PanoramaViewer({
         viewerRef.current.on("load", () => {
           if (!cancelled) {
             setStatus("ready");
+            setSceneTransition(false);
+            if (useMultiScene && scenes) {
+              const current =
+                activeSceneId && scenes.some((s) => s.id === activeSceneId)
+                  ? activeSceneId
+                  : scenes.find((s) => s.isMain)?.id ?? scenes[0]?.id;
+              if (current) loadedSceneRef.current = current;
+            }
             if (apiRef) {
               apiRef.current = {
                 isReady: () => true,
@@ -279,6 +327,11 @@ export function PanoramaViewer({
                   if (!v?.getPitch || !v.getYaw) return null;
                   return { pitch: v.getPitch(), yaw: v.getYaw() };
                 },
+                loadScene: (sceneId: string) => {
+                  if (loadedSceneRef.current === sceneId) return;
+                  loadedSceneRef.current = sceneId;
+                  viewerRef.current?.loadScene?.(sceneId);
+                },
               };
             }
           }
@@ -286,12 +339,19 @@ export function PanoramaViewer({
         viewerRef.current.on("error", (msg: unknown) => {
           if (!cancelled) {
             setStatus("error");
+            setSceneTransition(false);
             setErrorMsg(typeof msg === "string" ? msg : "Panorama failed to render.");
           }
         });
         viewerRef.current.on("scenechange", (...args: unknown[]) => {
-          const data = args[0] as { sceneId?: string } | undefined;
-          if (data?.sceneId) onSceneChangeRef.current?.(data.sceneId);
+          const raw = args[0];
+          const nextId =
+            typeof raw === "string" ? raw : (raw as { sceneId?: string } | undefined)?.sceneId;
+          if (!nextId) return;
+          if (loadedSceneRef.current === nextId) return;
+          loadedSceneRef.current = nextId;
+          setSceneTransition(true);
+          onSceneChangeRef.current?.(nextId);
         });
 
         if (mode === "edit") {
@@ -314,6 +374,7 @@ export function PanoramaViewer({
 
     return () => {
       cancelled = true;
+      loadedSceneRef.current = null;
       if (apiRef) apiRef.current = null;
       viewerRef.current?.destroy();
       viewerRef.current = null;
@@ -327,12 +388,16 @@ export function PanoramaViewer({
     defaultYaw,
     defaultHfov,
     mode,
+    sceneFadeMs,
   ]);
 
   useEffect(() => {
-    if (!useMultiScene || !activeSceneId || !viewerRef.current?.loadScene) return;
-    viewerRef.current.loadScene(activeSceneId);
-  }, [activeSceneId, useMultiScene]);
+    if (!useMultiScene || !resolvedActiveId || !viewerRef.current?.loadScene) return;
+    if (status !== "ready") return;
+    if (loadedSceneRef.current === resolvedActiveId) return;
+    loadedSceneRef.current = resolvedActiveId;
+    viewerRef.current.loadScene(resolvedActiveId);
+  }, [resolvedActiveId, useMultiScene, status]);
 
   const showEmpty = !useMultiScene && !panoramaPath;
 
@@ -349,25 +414,36 @@ export function PanoramaViewer({
   return (
     <div className="panorama-viewer-wrap">
       {useMultiScene && scenes && scenes.length > 1 && (
-        <div className="scene-tabs" role="tablist" aria-label="Tour areas">
-          {scenes.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              role="tab"
-              aria-selected={s.id === firstSceneId}
-              className={`scene-tab ${s.id === firstSceneId ? "active" : ""}`}
-              onClick={() => {
-                onSceneChange?.(s.id);
-                viewerRef.current?.loadScene?.(s.id);
-              }}
-            >
-              {s.name}
-            </button>
-          ))}
+        <div className="scene-tabs" role="tablist" aria-label="Tour viewpoints">
+          {scenes
+            .filter((s) => !s.tableId)
+            .concat(scenes.filter((s) => s.tableId))
+            .filter((s, i, arr) => arr.findIndex((x) => x.id === s.id) === i)
+            .map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                role="tab"
+                aria-selected={s.id === resolvedActiveId}
+                className={`scene-tab ${s.id === resolvedActiveId ? "active" : ""}`}
+                onClick={() => {
+                  if (loadedSceneRef.current === s.id) return;
+                  loadedSceneRef.current = s.id;
+                  setSceneTransition(true);
+                  onSceneChange?.(s.id);
+                  viewerRef.current?.loadScene?.(s.id);
+                }}
+              >
+                {s.name}
+              </button>
+            ))}
         </div>
       )}
-      {status === "loading" && <div className="panorama-status overlay">Loading 360° view…</div>}
+      {(status === "loading" || sceneTransition) && (
+        <div className="panorama-status overlay" aria-live="polite">
+          {status === "loading" ? "Loading 360° view…" : "Moving to next viewpoint…"}
+        </div>
+      )}
       {status === "error" && (
         <div className="panorama-empty">
           <strong>Could not open panorama</strong>
@@ -386,7 +462,7 @@ export function PanoramaViewer({
       )}
       {status === "ready" && mode === "book" && (
         <p className="panorama-edit-hint">
-          Drag to look around · gold dots = tables · labeled arrows = walk to another area
+          Gold markers = tables · gold arrows = walk to another real 360° viewpoint
         </p>
       )}
     </div>

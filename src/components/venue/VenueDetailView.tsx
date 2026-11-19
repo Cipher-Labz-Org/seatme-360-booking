@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { LuxuryButton } from "@/components/luxury/LuxuryButton";
 import { assetUrl } from "@/lib/config";
+import { venueCoverUrl } from "@/lib/venueImagery";
 
 export type VenueDetailData = {
   id: string;
@@ -67,9 +68,9 @@ export function VenueDetailView({ venue }: { venue: VenueDetailData }) {
   const hours = useMemo(() => parseHours(venue.openingHours), [venue.openingHours]);
 
   const heroImage =
-    assetUrl(venue.coverImage) ??
-    assetUrl(venue.gallery[0]?.imageUrl) ??
-    assetUrl(venue.locations.find((l) => l.panoramaUrl)?.panoramaUrl ?? null) ??
+    venueCoverUrl(venue.id, venue.coverImage) ||
+    assetUrl(venue.gallery[0]?.imageUrl) ||
+    assetUrl(venue.locations.find((l) => l.panoramaUrl)?.panoramaUrl ?? null) ||
     "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1600&q=85";
 
   const primaryLocation =
@@ -159,32 +160,38 @@ export function VenueDetailView({ venue }: { venue: VenueDetailData }) {
             </section>
           )}
 
-          <section className="venue-block">
+          <section className="venue-block" id="dining-locations">
             <h2>Dining locations</h2>
             {venue.locations.length === 0 ? (
               <div className="empty-state">No dining locations listed yet.</div>
             ) : (
-              <div className="restaurant-grid">
-                {venue.locations.map((loc) => (
-                  <Link key={loc.id} className="restaurant-card" href={`/book/${loc.id}`}>
-                    <div className="restaurant-body">
-                      <h3>{loc.name}</h3>
-                      <p className="lead" style={{ fontSize: 14, margin: "8px 0 0" }}>
-                        {loc.description || "Reserve a table in this space."}
-                      </p>
-                      <div className="restaurant-meta" style={{ marginTop: 12 }}>
-                        <span>{loc._count.tables} tables</span>
-                        {loc.panoramaUrl && (
-                          <>
-                            <span>•</span>
-                            <span>360° tour</span>
-                          </>
-                        )}
+              <div className="venue-zone-grid">
+                {venue.locations.map((loc) => {
+                  const zoneImage =
+                    assetUrl(loc.panoramaUrl) ??
+                    assetUrl(venue.gallery[0]?.imageUrl) ??
+                    heroImage;
+                  return (
+                    <Link key={loc.id} className="venue-zone-card" href={`/book/${loc.id}`}>
+                      <div
+                        className="venue-zone-media"
+                        style={{ backgroundImage: `url('${zoneImage}')` }}
+                      >
+                        {loc.panoramaUrl && <span className="badge badge-gold">360° tour</span>}
                       </div>
-                      <span className="button primary location-card-action">Book with 360° →</span>
-                    </div>
-                  </Link>
-                ))}
+                      <div className="venue-zone-body">
+                        <h3>{loc.name}</h3>
+                        <p>{loc.description || "Reserve a table in this dining zone."}</p>
+                        <div className="restaurant-meta">
+                          <span>
+                            {loc._count.tables} {loc._count.tables === 1 ? "table" : "tables"}
+                          </span>
+                        </div>
+                        <span className="button primary location-card-action">Book this room →</span>
+                      </div>
+                    </Link>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -266,9 +273,7 @@ export function VenueDetailView({ venue }: { venue: VenueDetailData }) {
             {venue.locations.length > 1 && primaryLocation && (
               <p className="venue-alt-locations">
                 Or pick another space in{" "}
-                <a href="#dining-locations" onClick={(e) => e.preventDefault()}>
-                  dining locations
-                </a>{" "}
+                <a href="#dining-locations">dining locations</a>{" "}
                 below.
               </p>
             )}

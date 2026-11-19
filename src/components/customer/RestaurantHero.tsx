@@ -44,9 +44,9 @@ export function RestaurantHero({ search, onSearchChange, onSearchSubmit }: Props
             unforgettable.
           </p>
           <div className="nav-actions hero-ctas flex flex-wrap gap-3">
-            <LuxuryButton href="#venues">Explore Restaurants</LuxuryButton>
-            <LuxuryButton href="#experience-360" variant="outline">
-              Experience in 360°
+            <LuxuryButton href="#experience-360">Experience in 360°</LuxuryButton>
+            <LuxuryButton href="#venues" variant="outline">
+              Explore Restaurants
             </LuxuryButton>
           </div>
         </motion.div>

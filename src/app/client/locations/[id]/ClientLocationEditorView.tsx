@@ -31,6 +31,7 @@ type EditorScene = {
   id: string;
   name: string;
   panoramaUrl: string;
+  tableId?: string | null;
   navFrom: { id: string; targetSceneId: string; pitch: number; yaw: number; label: string }[];
 };
 
@@ -318,8 +319,9 @@ export function ClientLocationEditorView({ id }: { id: string }) {
         <div className="panel" style={{ marginTop: 16 }}>
           <h3>360° scenes</h3>
           <p className="upload-hint" style={{ marginTop: 8 }}>
-            First upload is your main room. Add more scenes for bar, terrace, private dining — then link them with tour
-            navigation hotspots.
+            Build a Street View–style walkthrough: main entrance panorama, extra viewpoints (bar, terrace), tour links
+            between them, and per-table 360° uploads that become linked scenes (real camera positions — never cropped
+            zooms).
           </p>
           <label className="upload-field" style={{ marginTop: 12 }}>
             Main / replace primary panorama
@@ -541,7 +543,7 @@ export function ClientLocationEditorView({ id }: { id: string }) {
                       </td>
                       <td>
                         <label className="upload-hint" style={{ cursor: "pointer" }}>
-                          {t.panoramaUrl ? "Replace view" : "Upload view"}
+                          {t.panoramaUrl ? "Replace walkthrough view" : "Upload table 360°"}
                           <input
                             type="file"
                             accept="image/*"
@@ -569,6 +571,33 @@ export function ClientLocationEditorView({ id }: { id: string }) {
             </Link>
             {scenes.length > 0 && (
               <>
+                <h3 style={{ marginTop: 24 }}>Tour scenes</h3>
+                <ul className="venue-cms-menu-list">
+                  {scenes.map((s) => (
+                    <li key={s.id}>
+                      <span>
+                        {s.name}
+                        {s.tableId ? " · table viewpoint" : ""}
+                      </span>
+                      {!s.tableId && (
+                        <button
+                          type="button"
+                          className="button ghost small"
+                          onClick={async () => {
+                            await api(`/api/client/scenes/${s.id}`, {
+                              method: "PATCH",
+                              body: JSON.stringify({ isMain: true }),
+                            });
+                            showToast(`${s.name} set as main entrance`);
+                            loadScenes();
+                          }}
+                        >
+                          Set as main room
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
                 <h3 style={{ marginTop: 24 }}>Tour links (this scene)</h3>
                 <ul className="venue-cms-menu-list">
                   {(scenes.find((s) => s.id === activeSceneId)?.navFrom ?? []).map((h) => {

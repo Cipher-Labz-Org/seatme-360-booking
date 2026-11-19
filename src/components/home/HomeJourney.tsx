@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
 import { fadeUp, motionEase } from "@/components/customer/motion";
+import { LuxuryButton } from "@/components/luxury/LuxuryButton";
 import { SectionHeader } from "@/components/luxury/SectionHeader";
 
 const STEPS = [
@@ -44,6 +46,12 @@ export function HomeJourney() {
               {i < STEPS.length - 1 && <span className="journey-connector" aria-hidden />}
             </motion.div>
           ))}
+        </div>
+        <div className="section-cta-row">
+          <LuxuryButton href="/discover">Browse restaurants</LuxuryButton>
+          <Link className="button outline" href="/#experience-360">
+            See the 360° experience
+          </Link>
         </div>
       </div>
     </section>

@@ -2,17 +2,11 @@ import { Suspense } from "react";
 import { SiteFooter } from "@/components/SiteFooter";
 import { TopBar } from "@/components/TopBar";
 import { DiscoverView } from "./DiscoverView";
-import { API_URL } from "@/lib/config";
-import type { PublicVenue } from "@/lib/types";
-
-async function getVenues(): Promise<PublicVenue[]> {
-  const res = await fetch(`${API_URL}/api/public/venues`, { cache: "no-store" });
-  if (!res.ok) return [];
-  return res.json();
-}
+import { enrichVenuesDisplay } from "@/lib/venueImagery";
+import { fetchPublicVenues } from "@/lib/publicData";
 
 export default async function DiscoverPage() {
-  const venues = await getVenues();
+  const venues = enrichVenuesDisplay(await fetchPublicVenues());
   return (
     <>
       <TopBar />
